@@ -4,6 +4,8 @@
 
 具体设置可以按需修改
 
+所有模型均未能复现原文结果，正在努力💪
+
 baseline
 ```bash
 python train/resnnet50.py configs/resnet50.py --gpu 0 2
