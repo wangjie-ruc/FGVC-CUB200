@@ -8,6 +8,9 @@ loss = 'cross_entropy_loss'
 data_root = '/home/jie.wang/data/CUB_200_2011'
 batch_size = 16
 
+train_transforms = 'configs/transforms/train.json'
+eval_transforms = 'configs/transforms/eval.json'
+
 # optimizer and learning rate
 optimizer = dict(type='SGD', lr=0.001, momentum=0.9, weight_decay=5e-4)
 optimizer_config = dict(grad_clip=None)

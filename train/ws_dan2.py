@@ -1,3 +1,6 @@
+import sys
+sys.path.append('.')
+
 import logging
 import os
 from argparse import ArgumentParser
@@ -37,52 +40,56 @@ def accuracy(output, target, topk=(1, )):
 def batch_processor(model, data, train_mode):
     log_vars = OrderedDict()
 
-    images, labels = data
-    labels = labels.cuda()
-    images = images.cuda()
+    input, target = data
+    input = input.cuda()
+    target = target.cuda()
 
     feature_center = model.module.center if hasattr(model, 'module') else model.center
-    outputs, feature_matrix, attention_map = model(images)
-    raw_loss = F.cross_entropy(outputs, labels)
+    outputs, feature_matrix, attention_map = model(input)
     if train_mode:
-        center_loss = F.mse_loss(feature_matrix, feature_center[labels])
-        feature_center[labels] += 1e-4 * (feature_matrix.detach() - feature_center[labels])
-        
-        # attention crop
-        attention_map = F.upsample_bilinear(attention_map, size=(images.size(2), images.size(3)))
-        thetas = networks.ws_dan.attention_crop(attention_map.detach())
-        thetas = torch.from_numpy(thetas).cuda()
-        grid = F.affine_grid(thetas, images.size())
-        crop_images = F.grid_sample(images, grid)
+        # Update Feature Center
+        feature_center_batch = F.normalize(feature_center[target], dim=-1)
+        feature_center[target] += 5e-2 * \
+            (feature_matrix.detach() - feature_center_batch)
 
-        outputs1, _, _ = model(crop_images)
-        crop_loss = F.cross_entropy(outputs1, labels)
-        
-        # attention drop
-        drop_mask = networks.ws_dan.attention_drop(attention_map.detach())
-        drop_images = images * drop_mask
-        outputs2, _, _ = model(drop_images)
-        drop_loss = F.cross_entropy(outputs2, labels)
-        
-        loss = (raw_loss + crop_loss + drop_loss) / 3 + center_loss
+        # Attention Cropping
+        with torch.no_grad():
+            crop_images = networks.ws_dan2.batch_augment(
+                input, attention_map[:, :1, :, :], mode='crop', theta=(0.4, 0.6), padding_ratio=0.1)
+
+        # crop images forward
+        pred_crop, _, _ = model(crop_images)
+
+        # Attention Dropping
+        with torch.no_grad():
+            drop_images = batch_augment(
+                input, attention_map[:, 1:, :, :], mode='drop', theta=(0.2, 0.5))
+
+        # drop images forward
+        pred_drop, _, _ = model(drop_images)
+
+        # loss
+        loss = F.cross_entropy(outputs, target) / 3. + \
+            F.cross_entropy(pred_crop, target) / 3. + \
+            F.cross_entropy(pred_drop, target) / 3. + \
+            F.mse_loss(feature_matrix, feature_center_batch)
     else:
-        # mask crop
-        attention_map = torch.mean(attention_map, dim=1).unsqueeze(1)
-        attention_map = F.upsample_bilinear(attention_map, size=(images.size(2), images.size(3)))
-        thetas = networks.ws_dan.mask2bbox(attention_map)
-        thetas = torch.from_numpy(thetas).cuda()
+        # Object Localization and Refinement
+        crop_images = networks.ws_dan2.batch_augment(
+            input, attention_map, mode='crop', theta=0.1, padding_ratio=0.05)
+        pred_crop, _, _ = model(crop_images)
 
-        grid = F.affine_grid(thetas, images.size())
-        crop_images = F.grid_sample(images, grid)
-        outputs1, _, _ = model(crop_images)
-        mask_loss = F.cross_entropy(outputs1, labels)
-        loss = (raw_loss + mask_loss) / 2
+        # Final prediction
+        outputs = (outputs + pred_crop) / 2.
 
-    acc_top1, acc_top5 = accuracy(outputs, labels, topk=(1, 5))
+        # loss
+        loss = F.cross_entropy(pred, target)
+
+    acc_top1, acc_top5 = accuracy(outputs, target, topk=(1, 5))
     log_vars['loss'] = loss.item()
     log_vars['acc'] = acc_top1.item()
 
-    outputs = dict(loss=loss, log_vars=log_vars, num_samples=images.size(0))
+    outputs = dict(loss=loss, log_vars=log_vars, num_samples=input.size(0))
     return outputs
 
 
@@ -138,7 +145,7 @@ def main():
         cfg.optimizer,
         cfg.work_dir,
         log_level=cfg.log_level)
-        
+
     runner.register_training_hooks(
         lr_config=cfg.lr_config,
         optimizer_config=cfg.optimizer_config,

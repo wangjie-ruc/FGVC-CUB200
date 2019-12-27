@@ -8,8 +8,11 @@ loss = 'multi_smooth_loss'
 data_root = '/home/jie.wang/data/CUB_200_2011'
 batch_size = 8
 
+train_transforms = 'configs/transforms/train.json'
+eval_transforms = 'configs/transforms/eval.json'
+
 # optimizer and learning rate
-optimizer = dict(type='SGD', lr=0.01, momentum=0.9, weight_decay=5e-4)
+optimizer = dict(type='SGD', lr=0.001, momentum=0.9, weight_decay=1e-4)
 optimizer_config = dict(grad_clip=None)
 lr_config = dict(policy='step', step=20)
 
@@ -21,7 +24,7 @@ checkpoint_config = dict(interval=5)  # save checkpoint at every epoch
 workflow = [('train', 1), ('val', 1)]
 total_epochs = 60
 resume_from = None
-load_from = None
+load_from = 'out/s3n/latest.pth'
 
 # logging settings
 log_level = 'INFO'

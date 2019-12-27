@@ -212,6 +212,7 @@ class S3N(nn.Module):
             else:
                 decide_map = class_response_maps[idx_i, sort_number[idx_i, 0:5],:,:].mean(0)
 
+            self.decide_map = decide_map
             min_value, max_value = decide_map.min(), decide_map.max()
             decide_map = (decide_map-min_value)/(max_value-min_value)
 
@@ -266,11 +267,13 @@ class S3N(nn.Module):
 
         xs = torch.cat(xs, 0)
         xs_hm = nn.ReplicationPad2d(self.padding_size)(xs)
+        self.xs_hm = xs_hm
         grid = self.create_grid(xs_hm).to(input_x.device)
         x_sampled_zoom = F.grid_sample(input_x, grid)
 
         xs_inv = torch.cat(xs_inv, 0)
         xs_hm_inv = nn.ReplicationPad2d(self.padding_size)(xs_inv)
+        self.xs_hm_inv = xs_hm_inv
         grid_inv = self.create_grid(xs_hm_inv).to(input_x.device)
         x_sampled_inv = F.grid_sample(input_x, grid_inv)
 
@@ -288,6 +291,8 @@ class S3N(nn.Module):
             class_response_maps = F.interpolate(self.map_origin(feature_raw), size=self.grid_size, mode='bilinear', align_corners=True)  
         x_sampled_zoom, x_sampled_inv = self.generate_map(input_x, class_response_maps, p)
 
+        self.x_sampled_zoom = x_sampled_zoom
+        self.x_sampled_inv = x_sampled_inv
         feature_D = self.sampler_buffer(self.features(x_sampled_zoom))
         agg_sampler = self.sampler_classifier(self.avg(feature_D).view(-1, 2048))
 

@@ -207,6 +207,7 @@ class ResNet(nn.Module):
         x = self.layer3(x)
         x = self.layer4(x)
         att = self.attention(x)
+        self.att_map = att
         
         x = self._bilinear_attention_pooling(x, att)
         f = x

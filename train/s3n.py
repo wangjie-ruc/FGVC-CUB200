@@ -1,3 +1,6 @@
+import sys
+sys.path.append('.')
+
 import logging
 import os
 from argparse import ArgumentParser
@@ -16,7 +19,6 @@ from transforms import train_transform, eval_transform
 import datasets
 import networks
 
-
 def accuracy(output, target, topk=(1, )):
     """Computes the precision@k for the specified values of k"""
     with torch.no_grad():
@@ -34,61 +36,30 @@ def accuracy(output, target, topk=(1, )):
         return res
 
 
-def batch_processor(model, data, train_mode):
-    log_vars = OrderedDict()
-
-    input, target = data
-    input = input.cuda()
-    target = target.cuda()
-
-    feature_center = model.module.center if hasattr(model, 'module') else model.center
-    outputs, feature_matrix, attention_map = model(input)
+def batch_processor(model, data, train_mode, runner):
+    img, label = data
+    label = label.cuda(non_blocking=True)
+    img = img.cuda()
+    
     if train_mode:
-        # Update Feature Center
-        feature_center_batch = F.normalize(feature_center[target], dim=-1)
-        feature_center[target] += 5e-2 * \
-            (feature_matrix.detach() - feature_center_batch)
-
-        # Attention Cropping
-        with torch.no_grad():
-            crop_images = networks.ws_dan2.batch_augment(
-                input, attention_map[:, :1, :, :], mode='crop', theta=(0.4, 0.6), padding_ratio=0.1)
-
-        # crop images forward
-        pred_crop, _, _ = model(crop_images)
-
-        # Attention Dropping
-        with torch.no_grad():
-            drop_images = batch_augment(
-                input, attention_map[:, 1:, :, :], mode='drop', theta=(0.2, 0.5))
-
-        # drop images forward
-        pred_drop, _, _ = model(drop_images)
-
-        # loss
-        loss = F.cross_entropy(outputs, target) / 3. + \
-            F.cross_entropy(pred_crop, target) / 3. + \
-            F.cross_entropy(pred_drop, target) / 3. + \
-            F.mse_loss(feature_matrix, feature_center_batch)
+        if runner.epoch <= 20:
+            p = 0
+        else:
+            p = 1
     else:
-        # Object Localization and Refinement
-        crop_images = networks.ws_dan2.batch_augment(
-            input, attention_map, mode='crop', theta=0.1, padding_ratio=0.05)
-        pred_crop, _, _ = model(crop_images)
-
-        # Final prediction
-        outputs = (outputs + pred_crop) / 2.
-
-        # loss
-        loss = F.cross_entropy(pred, target)
-
-    acc_top1, acc_top5 = accuracy(outputs, target, topk=(1, 5))
+        if runner.epoch <= 20:
+            p = 1
+        else:
+            p = 2
+    pred = model(img, p=p)
+    loss = networks.loss.multi_smooth_loss(pred, label, smooth_ratio=0.85)
+    acc_top1, acc_top5 = accuracy(pred[0], label, topk=(1, 5))
+    log_vars = OrderedDict()
     log_vars['loss'] = loss.item()
     log_vars['acc'] = acc_top1.item()
 
-    outputs = dict(loss=loss, log_vars=log_vars, num_samples=input.size(0))
+    outputs = dict(loss=loss, log_vars=log_vars, num_samples=img.size(0))
     return outputs
-
 
 def main():
     parser, cfg = Config.auto_argparser()
@@ -135,6 +106,7 @@ def main():
     cfg.gpus = list(range(len(cfg.gpus)))
     model = DataParallel(model, device_ids=cfg.gpus).cuda()
 
+
     # build runner and register hooks
     runner = Runner(
         model,
@@ -142,7 +114,6 @@ def main():
         cfg.optimizer,
         cfg.work_dir,
         log_level=cfg.log_level)
-
     runner.register_training_hooks(
         lr_config=cfg.lr_config,
         optimizer_config=cfg.optimizer_config,
@@ -155,7 +126,7 @@ def main():
     elif cfg.get('load_from') is not None:
         runner.load_checkpoint(cfg.load_from)
 
-    runner.run([train_loader, val_loader], cfg.workflow, cfg.total_epochs)
+    runner.run([train_loader, val_loader], cfg.workflow, cfg.total_epochs, runner=runner)
 
 
 if __name__ == '__main__':

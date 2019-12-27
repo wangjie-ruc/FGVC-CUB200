@@ -1,3 +1,6 @@
+import sys
+sys.path.append('.')
+
 import logging
 import os
 from argparse import ArgumentParser
@@ -16,6 +19,7 @@ from transforms import train_transform, eval_transform
 import datasets
 import networks
 
+
 def accuracy(output, target, topk=(1, )):
     """Computes the precision@k for the specified values of k"""
     with torch.no_grad():
@@ -33,30 +37,20 @@ def accuracy(output, target, topk=(1, )):
         return res
 
 
-def batch_processor(model, data, train_mode, runner):
+def batch_processor(model, data, train_mode):
     img, label = data
     label = label.cuda(non_blocking=True)
     img = img.cuda()
-    
-    if train_mode:
-        if runner.epoch <= 20:
-            p = 0
-        else:
-            p = 1
-    else:
-        if runner.epoch <= 20:
-            p = 1
-        else:
-            p = 2
-    pred = model(img, p=p)
-    loss = networks.loss.multi_smooth_loss(pred, label, smooth_ratio=0.85)
-    acc_top1, acc_top5 = accuracy(pred[0], label, topk=(1, 5))
+    pred, theta = model(img)
+    loss = F.cross_entropy(pred, label)
+    acc_top1, acc_top5 = accuracy(pred, label, topk=(1, 5))
     log_vars = OrderedDict()
     log_vars['loss'] = loss.item()
     log_vars['acc'] = acc_top1.item()
 
     outputs = dict(loss=loss, log_vars=log_vars, num_samples=img.size(0))
     return outputs
+
 
 def main():
     parser, cfg = Config.auto_argparser()
@@ -103,7 +97,6 @@ def main():
     cfg.gpus = list(range(len(cfg.gpus)))
     model = DataParallel(model, device_ids=cfg.gpus).cuda()
 
-
     # build runner and register hooks
     runner = Runner(
         model,
@@ -117,13 +110,20 @@ def main():
         checkpoint_config=cfg.checkpoint_config,
         log_config=cfg.log_config)
 
+    # import itertools
+    # model_without_module = model.module if hasattr(model, 'module') else model
+    # optimizer = torch.optim.SGD([{"params": model_without_module.stn.parameters()},
+    #                              {"params": model_without_module.fc.parameters()}],
+    #                             lr=0.001, momentum=0.9, weight_decay=1e-4)
+    # runner.optimizer = optimizer
+
     # load param (if necessary) and run
     if cfg.get('resume_from') is not None:
         runner.resume(cfg.resume_from)
     elif cfg.get('load_from') is not None:
         runner.load_checkpoint(cfg.load_from)
 
-    runner.run([train_loader, val_loader], cfg.workflow, cfg.total_epochs, runner=runner)
+    runner.run([train_loader, val_loader], cfg.workflow, cfg.total_epochs)
 
 
 if __name__ == '__main__':

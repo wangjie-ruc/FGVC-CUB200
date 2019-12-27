@@ -1,20 +1,22 @@
 import logging
 import os
+import sys
 from argparse import ArgumentParser
 from collections import OrderedDict
 
+import cvt
 import torch
 import torch.nn.functional as F
+from apcs import Config
+from mmcv.runner import Runner
 from torch.nn.parallel import DataParallel
 from torch.utils.data import DataLoader
 from torchvision import transforms
 
-from apcs import Config
-from mmcv.runner import Runner
-
-from transforms import train_transform, eval_transform
+sys.path.append('.')
 import datasets
 import networks
+
 
 def accuracy(output, target, topk=(1, )):
     """Computes the precision@k for the specified values of k"""
@@ -38,7 +40,8 @@ def batch_processor(model, data, train_mode):
     label = label.cuda(non_blocking=True)
     img = img.cuda()
     pred = model(img)
-    loss = F.cross_entropy(pred, label)
+    # loss = F.cross_entropy(pred, label)
+    loss = networks.loss.smooth_loss(pred, label, 0.8)
     acc_top1, acc_top5 = accuracy(pred, label, topk=(1, 5))
     log_vars = OrderedDict()
     log_vars['loss'] = loss.item()
@@ -46,6 +49,7 @@ def batch_processor(model, data, train_mode):
 
     outputs = dict(loss=loss, log_vars=log_vars, num_samples=img.size(0))
     return outputs
+
 
 def main():
     parser, cfg = Config.auto_argparser()
@@ -57,12 +61,12 @@ def main():
     train_dataset = datasets.CUB200(
         root=cfg.data_root,
         train=True,
-        transforms=train_transform
+        transforms=cvt.from_file(cfg.train_transforms)
     )
     val_dataset = datasets.CUB200(
         root=cfg.data_root,
         train=False,
-        transforms=eval_transform
+        transforms=cvt.from_file(cfg.eval_transforms)
     )
 
     num_workers = cfg.data_workers * len(cfg.gpus)
@@ -91,7 +95,6 @@ def main():
     os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(map(str, cfg.gpus))
     cfg.gpus = list(range(len(cfg.gpus)))
     model = DataParallel(model, device_ids=cfg.gpus).cuda()
-
 
     # build runner and register hooks
     runner = Runner(
