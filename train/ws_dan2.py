@@ -6,6 +6,7 @@ import os
 from argparse import ArgumentParser
 from collections import OrderedDict
 
+import cvt
 import torch
 import torch.nn.functional as F
 from torch.nn.parallel import DataParallel
@@ -103,12 +104,12 @@ def main():
     train_dataset = datasets.CUB200(
         root=cfg.data_root,
         train=True,
-        transforms=train_transform
+        transforms=cvt.from_file(cfg.train_transforms)
     )
     val_dataset = datasets.CUB200(
         root=cfg.data_root,
         train=False,
-        transforms=eval_transform
+        transforms=cvt.from_file(cfg.train_transforms)
     )
 
     num_workers = cfg.data_workers * len(cfg.gpus)
